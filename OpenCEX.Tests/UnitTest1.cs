@@ -25,7 +25,7 @@ namespace OpenCEX
 			{
 				await redisKVHelper.Set("jessielesbian.islesbian", false);
 				ITransaction tx = StaticUtils.redis.CreateTransaction();
-				Task flushcache = await redisKVHelper.Flush(tx);
+				Task flushcache = await redisKVHelper.Flush(tx, true);
 				if (!await tx.ExecuteAsync())
 				{
 					await flushcache;
@@ -38,7 +38,7 @@ namespace OpenCEX
 				Assert.IsFalse((bool)await redisKVHelper.Get("jessielesbian.islesbian"));
 				await redisKVHelper.Set("jessielesbian.islesbian", true);
 				ITransaction tx = StaticUtils.redis.CreateTransaction();
-				Task flushcache = await redisKVHelper.Flush(tx);
+				Task flushcache = await redisKVHelper.Flush(tx, true);
 				if (!await tx.ExecuteAsync())
 				{
 					await flushcache;
@@ -85,7 +85,7 @@ namespace OpenCEX
 				BalancesManager balancesManager = new BalancesManager(redisKVHelper);
 				balancesManager.CreditOrDebit("jessielesbian.bitcoins", 10);
 				await balancesManager.Flush();
-				Task flushcache = await redisKVHelper.Flush(tx);
+				Task flushcache = await redisKVHelper.Flush(tx, true);
 
 				//Optimistic locking
 				if (!await tx.ExecuteAsync())
@@ -100,7 +100,7 @@ namespace OpenCEX
 				BalancesManager balancesManager = new BalancesManager(redisKVHelper);
 				balancesManager.CreditOrDebit("jessielesbian.bitcoins", -9);
 				await balancesManager.Flush();
-				Task flushcache = await redisKVHelper.Flush(tx);
+				Task flushcache = await redisKVHelper.Flush(tx, true);
 
 				//Optimistic locking
 				if (!await tx.ExecuteAsync())
@@ -109,7 +109,6 @@ namespace OpenCEX
 					goto start;
 				}
 			}
-			tx = StaticUtils.redis.CreateTransaction();
 			using (RedisKVHelper redisKVHelper = RedisKVHelper.Create())
 			{
 				BalancesManager balancesManager = new BalancesManager(redisKVHelper);
@@ -125,7 +124,6 @@ namespace OpenCEX
 				Assert.Fail("Negative balance allowed");
 			}
 		pass2:
-			tx = StaticUtils.redis.CreateTransaction();
 			using (RedisKVHelper redisKVHelper = RedisKVHelper.Create())
 			{
 				BalancesManager balancesManager = new BalancesManager(redisKVHelper);

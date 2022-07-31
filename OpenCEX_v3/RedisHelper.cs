@@ -182,11 +182,15 @@ namespace OpenCEX
 				locker.Release();
 			}
 		}
-
+		private static async Task<bool> Transform2(Task tsk){
+			await tsk;
+			return false;
+		}
+		private static readonly KeyValuePair<RedisKey, RedisValue>[] empty = new KeyValuePair<RedisKey, RedisValue>[0];
 		/// <summary>
-		/// Flushes the RedisKVHelper to the underlying Redis database, and returns a task that represents optimistic cache update
+		/// if dowrite is true, flushes the RedisKVHelper to the underlying Redis database, and returns a task that represents optimistic cache update, otherwise check that the optimistic cache is up to date.
 		/// </summary>
-		public async Task<Task> Flush(ITransaction tx){
+		public async Task<Task> Flush(ITransaction tx, bool dowrite){
 			Queue<KeyValuePair<RedisKey, RedisValue>> flushingQueue2 = new Queue<KeyValuePair<RedisKey, RedisValue>>();
 			await locker.WaitAsync();
 			try
@@ -200,17 +204,17 @@ namespace OpenCEX
 						tx.AddCondition(Condition.StringEqual(res.key, res.val));
 
 						//Enqueue dirty keys for flushing
-						if (res.dirty)
+						if (res.dirty && dowrite)
 						{
 							flushingQueue2.Enqueue(new KeyValuePair<RedisKey, RedisValue>(res.key, res.newval));
 						}
 					}
 				}
 
-				KeyValuePair<RedisKey, RedisValue>[] flushingQueue3 = flushingQueue2.ToArray();
+				KeyValuePair<RedisKey, RedisValue>[] flushingQueue3 = dowrite ? flushingQueue2.ToArray() : empty;
 
 				//Update the optimistic caches in the background
-				return StaticUtils.UpdateOptimisticRedisCache(tx.StringSetAsync(flushingQueue3), flushingQueue3);
+				return StaticUtils.UpdateOptimisticRedisCache(tx.StringSetAsync(flushingQueue3), dowrite, flushingQueue3);
 			}
 			finally
 			{

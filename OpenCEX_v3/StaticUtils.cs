@@ -14,8 +14,12 @@ using StackExchange.Redis;
 using Newtonsoft.Json;
 using System.Globalization;
 using System.Linq;
+
 using Newtonsoft.Json.Linq;
 using System.Net.WebSockets;
+using Org.BouncyCastle.Crypto.Generators;
+using Org.BouncyCastle.Crypto.Digests;
+using Nethereum.Signer;
 
 namespace OpenCEX
 {
@@ -128,16 +132,122 @@ namespace OpenCEX
 			{
 				requestMethods.Add("doNothing", DoNothing2);
 				requestMethods.Add("getCaptchaSiteKey", GetCaptchaSiteKey);
+				requestMethods.Add("createAccount", CreateAccount);
+				requestMethods.Add("restoreSession", RestoreSession);
 			}
 		}
+		private static async Task<object> RestoreSession(object[] parameters, ulong _, WebSocketHelper wshelper){
+			if (parameters.Length != 1)
+			{
+				UserError.Throw("Invalid number of arguments", 13);
+			}
+			if(wshelper is null){
+				UserError.Throw("Websockets only", 19);
+			}
+			if(parameters[0] is string token){
+				wshelper.userid = await VerifySessionToken(token);
+				return true;
+			} else{
+				UserError.Throw("Non-string arguments not accepted", 15);
+				return null;
+			}
+		}
+		private static async Task<object> CreateAccount(object[] parameters, ulong _, WebSocketHelper wshelper)
+		{
+			if(parameters.Length != 3){
+				UserError.Throw("Invalid number of arguments", 13);
+			}
+
+			if(parameters[0] is string && parameters[1] is string && parameters[2] is string){
+				if(parameters[0] is null || parameters[1] is null || parameters[2] is null){
+					UserError.Throw("Null arguments not accepted", 14);
+				}
+				Task chkcaptcha = VerifyCaptcha((string) parameters[0]);
+
+				ITransaction transaction = redis.CreateTransaction();
+				string username = (string)parameters[1];
+				string accpasshashkey = "AP" + username;
+				string accuseridkey = "AU" + username;
+
+				//We use Redis conditional commit to eliminate the expensive read needed to check username availability
+				transaction.AddCondition(Condition.KeyNotExists(accpasshashkey));
+				transaction.AddCondition(Condition.KeyNotExists(accuseridkey));
+				char[] pass = ((string)parameters[2]).ToCharArray();
+				if(pass.Length > 36){
+					UserError.Throw("Password length exceeds 72 bytes", 17);
+				}
+				byte[] salt = new byte[16];
+				ThreadStaticContext.randomNumberGenerator.GetBytes(salt, 0, 16);
+#pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+				transaction.StringSetAsync(accpasshashkey, OpenBsdBCrypt.Generate(pass, salt, 14));
+#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+				transaction.AddCondition(Condition.KeyNotExists(accuseridkey));
+				long userid = await redis.StringIncrementAsync("OpenCEX_UserID-CTR", 1L) + 1;
+				if(userid < 1){
+					throw new InvalidOperationException("Account number limit exceeded");
+				}
+#pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+				transaction.StringSetAsync(accuseridkey, userid);
+#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+				await chkcaptcha; //Late (optimistic) captcha checking, since we can still be reverted here
+				if(!await transaction.ExecuteAsync()){
+					UserError.Throw("Account opening failed", 16);
+				}
+				ulong userid2 = (ulong)userid;
+				if (wshelper is { }){
+					wshelper.userid = userid2;
+					Interlocked.MemoryBarrier();
+				}
+				return await GenerateSession(userid2);
+			} else{
+				UserError.Throw("Non-string arguments not accepted", 15);
+				return null;
+			}
+			
+
+			
+		}
+		public static readonly TimeSpan month = TimeSpan.FromDays(30);
+		public static async Task<string> GenerateSession(ulong userid){
+			byte[] token = new byte[64];
+			ThreadStaticContext.randomNumberGenerator.GetBytes(token, 0, 64);
+			byte[] hash = new byte[64];
+			Sha3Digest sha3Digest = new Sha3Digest(512);
+			sha3Digest.BlockUpdate(token, 0, 64);
+			sha3Digest.DoFinal(hash, 0);
+			if(await redis.StringSetAsync('S' + Convert.ToBase64String(hash, 0, 64), userid.ToString(), month)){
+				return Convert.ToBase64String(token, 0, 64);
+			} else{
+				throw new IOException("Failed to create session");
+			}
+		}
+
+		public static async Task<ulong> VerifySessionToken(string token){
+			byte[] bytes;
+			try{
+				bytes = Convert.FromBase64String(token);
+			} catch{
+				UserError.Throw("Invalid session token", 18);
+				return 0;
+			}
+			Sha3Digest sha3Digest = new Sha3Digest(512);
+			sha3Digest.BlockUpdate(bytes, 0, bytes.Length);
+			bytes = new byte[64];
+			sha3Digest.DoFinal(bytes, 0);
+			RedisValue redisValue = await redis.StringGetAsync('S' + Convert.ToBase64String(bytes, 0, 64));
+			if(redisValue.IsNullOrEmpty){
+				UserError.Throw("Invalid session token", 18);
+			}
+			return Convert.ToUInt64(redisValue);
+		}
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
-		private static async Task<object> DoNothing2(object[] @params, ulong userid)
+		private static async Task<object> DoNothing2(object[] @params, ulong userid, WebSocketHelper wshelper)
 #pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
 		{
 			return @params;
 		}
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
-		private static async Task<object> GetCaptchaSiteKey(object[] @params, ulong userid)
+		private static async Task<object> GetCaptchaSiteKey(object[] @params, ulong userid, WebSocketHelper wshelper)
 		{
 #pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
 			return RecaptchaSiteKey;
@@ -150,13 +260,15 @@ namespace OpenCEX
 		public static Task WipeDatabase() {
 			return redisServer.FlushDatabaseAsync(0);
 		}
+		//private static readonly EthECKey exchangeWallet = new EthECKey(Environment.GetEnvironmentVariable("OpenCEX_ExchangeWalletKey") ?? throw new InvalidOperationException("Missing exchange wallet key"));
+		private static readonly KeyValuePair<string, string> ReCaptchaSecretKey = new KeyValuePair<string, string>("secret", Environment.GetEnvironmentVariable("OpenCEX_ReCaptchaSecretKey") ?? throw new InvalidOperationException("Missing ReCaptcha secret key"));
 		private static readonly object requestMethodsLocker = new object();
-		private static readonly Dictionary<string, Func<object[], ulong, Task<object>>> requestMethods = new Dictionary<string, Func<object[], ulong, Task<object>>>();
+		private static readonly Dictionary<string, Func<object[], ulong, WebSocketHelper, Task<object>>> requestMethods = new Dictionary<string, Func<object[], ulong, WebSocketHelper, Task<object>>>();
 
 		/// <summary>
 		/// Dynamically define a new request method
 		/// </summary>
-		public static void RegisterRequestMethod(string name, Func<object[], ulong, Task<object>> method)
+		public static void RegisterRequestMethod(string name, Func<object[], ulong, WebSocketHelper, Task<object>> method)
 		{
 			lock (requestMethodsLocker) {
 				requestMethods.Add(name, method);
@@ -183,13 +295,15 @@ namespace OpenCEX
 		/// <summary>
 		/// Optimistic Redis Caching: flush the L1 cache to the L2 cache
 		/// </summary>
-		internal static async Task UpdateOptimisticRedisCache(Task<bool> tsk, KeyValuePair<RedisKey, RedisValue>[] queue)
+		internal static async Task UpdateOptimisticRedisCache(Task<bool> tsk, bool write, KeyValuePair<RedisKey, RedisValue>[] queue)
 		{
 			if(await tsk){
 				//Committed successfully
-				foreach(KeyValuePair <RedisKey, RedisValue> item in queue)
-				{
-					await OptimisticRedisCache.Set(item.Key, item.Value);
+				if(write){
+					foreach (KeyValuePair<RedisKey, RedisValue> item in queue)
+					{
+						await OptimisticRedisCache.Set(item.Key, item.Value);
+					}
 				}
 			} else{
 				//Failed to commit
@@ -286,12 +400,12 @@ namespace OpenCEX
 			{
 				UserError.Throw("Invalid Request", -32600);
 			}
-			if (requestMethods.TryGetValue(jsonRpcRequest.method, out Func<object[], ulong, Task<object>> meth))
+			if (requestMethods.TryGetValue(jsonRpcRequest.method, out Func<object[], ulong, WebSocketHelper, Task<object>> meth))
 			{
 			start:
 				object ret;
 				try{
-					ret = await meth(jsonRpcRequest.@params, userid);
+					ret = await meth(jsonRpcRequest.@params, userid, webSocket);
 				} catch(OptimisticRepeatException e){
 					//OPTIMISTIC LOCKING AND CACHING: Retry transaction if we run into OptimisticRepeatExceptions
 					await e.WaitCleanUp();
@@ -306,7 +420,25 @@ namespace OpenCEX
 			}
 
 		}
-		public static readonly string RecaptchaSiteKey = Environment.GetEnvironmentVariable("OpenCEX_ReCaptchaSiteKey") ?? throw new InvalidOperationException("Missing ReCaptcha site key");
+		private static readonly string RecaptchaSiteKey = Environment.GetEnvironmentVariable("OpenCEX_ReCaptchaSiteKey") ?? throw new InvalidOperationException("Missing ReCaptcha site key");
+		[JsonObject(MemberSerialization.Fields)]
+		private sealed class ReCaptchaResponse{
+			public bool success;
+		}
+
+		public static async Task VerifyCaptcha(string response){
+			HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "https://www.google.com/recaptcha/api/siteverify");
+			req.Content = new FormUrlEncodedContent(new KeyValuePair<string, string>[] { ReCaptchaSecretKey, new KeyValuePair<string, string>("response", response)});
+			IDictionary<string, object> props = req.Properties;
+			props.Add("secret", ReCaptchaSecretKey);
+			props.Add("response", response);
+
+			string res = await (await SafeSend(req)).Content.ReadAsStringAsync();
+			Console.WriteLine(res);
+			if (!JsonConvert.DeserializeObject<ReCaptchaResponse>(res).success){
+				UserError.Throw("Invalid captcha", 12);
+			}
+		}
 
 		private static readonly JsonRpcError internalServerError = new JsonRpcError(-32603, "Internal error");
 		public static async void WaitAndDisposeSemaphore(SemaphoreSlim semaphore){
@@ -315,8 +447,8 @@ namespace OpenCEX
 			} finally{
 				semaphore.Dispose();
 			}
-			
 		}
+
 		public static async Task<string> HandleJsonRequest(string json, ulong userid, WebSocketHelper webSocket){
 			if(json is null){
 				return "{\"jsonrpc\": \"2.0\", \"id\": null, \"error\": {\"code\": -32600, \"message\": \"Invalid Request\"}}";
@@ -359,7 +491,7 @@ namespace OpenCEX
 				Task<object>[] tasks = new Task<object>[limit];
 				for (int i = 0; i < limit; ++i)
 				{
-					tasks[i] = HandleJsonRequestImpl(jsonRpcRequests[i], userid, null);
+					tasks[i] = HandleJsonRequestImpl(jsonRpcRequests[i], userid, webSocket);
 				}
 				Queue<JsonRpcResponse> jsonRpcResponses = new Queue<JsonRpcResponse>();
 				for (int i = 0; i < limit; ++i)
@@ -420,7 +552,7 @@ namespace OpenCEX
 				}
 				try
 				{
-					string res = JsonConvert.SerializeObject(new JsonRpcSuccessResponse(jsonRpcRequest.id, await HandleJsonRequestImpl(jsonRpcRequest, userid, null)));
+					string res = JsonConvert.SerializeObject(new JsonRpcSuccessResponse(jsonRpcRequest.id, await HandleJsonRequestImpl(jsonRpcRequest, userid, webSocket)));
 					return jsonRpcRequest.id is null ? null : res;
 				}
 				catch (Exception e)
@@ -445,7 +577,7 @@ namespace OpenCEX
 					else
 					{
 						Console.Error.WriteLine("Unexpected internal server error: {0}", e);
-						return jsonRpcRequest.id is null ? null : "{\"jsonrpc\": \"2.0\", \"id\": null, \"error\": {\"code\": -32603, \"message\": \"Internal error\"}}";
+						return jsonRpcRequest.id is null ? null : JsonConvert.SerializeObject(new JsonRpcErrorResponse(jsonRpcRequest.id, internalServerError));
 					}
 				}
 
@@ -513,7 +645,7 @@ namespace OpenCEX
 		private static async void WebSocketHelper_OnWebSocketReceive(object sender, WebSocketReceiveEvent e)
 		{
 			WebSocketHelper webSocketHelper = (WebSocketHelper)sender;
-			string returns = await HandleJsonRequest(e.data, 0, webSocketHelper);
+			string returns = await HandleJsonRequest(e.data, webSocketHelper.userid, webSocketHelper);
 			if(returns is { }){
 				await webSocketHelper.Send(Encoding.UTF8.GetBytes(returns));
 			}
@@ -543,7 +675,7 @@ namespace OpenCEX
 			Console.WriteLine("Initializing HTTP listener...");
 			using HttpListener httpListener = new HttpListener();
 			httpListener.Prefixes.Add(listen);
-
+			
 
 			Console.WriteLine("Starting HTTP Listener...");
 			httpListener.Start();
@@ -626,15 +758,9 @@ namespace OpenCEX
 			}
 		}
 
-		public static async Task<HttpResponseMessage> SafeGet(string url){
-			HttpResponseMessage httpResponseMessage = await ThreadStaticContext.httpClient.GetAsync(url);
-			httpResponseMessage.EnsureSuccessStatusCode();
-			return httpResponseMessage;
-		}
-
-		public static async Task<HttpResponseMessage> SafePost(string url, HttpContent content)
+		public static async Task<HttpResponseMessage> SafeSend(HttpRequestMessage req)
 		{
-			HttpResponseMessage httpResponseMessage = await ThreadStaticContext.httpClient.PostAsync(url, content);
+			HttpResponseMessage httpResponseMessage = await ThreadStaticContext.httpClient.SendAsync(req);
 			httpResponseMessage.EnsureSuccessStatusCode();
 			return httpResponseMessage;
 		}

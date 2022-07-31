@@ -22,6 +22,7 @@ namespace OpenCEX
 		private readonly WebSocket webSocket;
 		private readonly ConcurrentDictionary<string, int> interestedIn = new ConcurrentDictionary<string, int>();
 		private readonly SemaphoreSlim sendLocker = new SemaphoreSlim(1, 1);
+		public ulong userid;
 		public async Task Send(ArraySegment<byte> bytes) {
 			await sendLocker.WaitAsync();
 			try
