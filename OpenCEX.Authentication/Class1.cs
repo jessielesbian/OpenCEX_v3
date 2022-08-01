@@ -9,4 +9,9 @@ namespace OpenCEX
 			Console.WriteLine("Authentication plugin loaded");
 		}
 	}
+	public static class AuthStaticUtils{
+		private static void Main(){
+			
+		}
+	}
 }
