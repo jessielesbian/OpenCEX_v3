@@ -93,17 +93,18 @@ namespace OpenCEX
 							{
 								UserError.Throw("Password length exceeds 72 bytes", 17);
 							}
-							Task<RedisValue> tsk = StaticUtils.redis.StringGetAsync("AU" + username);
-							RedisValue passhash = await StaticUtils.redis.StringGetAsync("AP" + username);
-							if (passhash.IsNullOrEmpty)
+							RedisValue[] redisValues = await StaticUtils.redis.StringGetAsync(new RedisKey[] { "AP" + username, "AU" + username });
+
+							//NOTE: We check against a "magic hash" if the user doesn't exist to protect against timing attacks. If the magic hash is cracked we still have a second safety check down the road.
+							if (!OpenBsdBCrypt.CheckPassword(redisValues[0].IsNullOrEmpty ? "$2a$14$SFfj6eJ12eU9yyKZf2aQ/e9516b4uIU8pyBcumAYFn13Hptxv2wGS" : (string) redisValues[0], pass))
 							{
 								UserError.Throw("Invalid credentials!", 20);
 							}
-							if (!OpenBsdBCrypt.CheckPassword(passhash, pass))
-							{
+							RedisValue uidstr = redisValues[1];
+							if(uidstr.IsNullOrEmpty){
 								UserError.Throw("Invalid credentials!", 20);
 							}
-							userid2 = (ulong)await tsk;
+							userid2 = Convert.ToUInt64(uidstr);
 
 						}
 						finally
