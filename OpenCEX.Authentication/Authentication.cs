@@ -31,55 +31,11 @@ namespace OpenCEX
 			}
 		}
 		private static readonly TimeSpan month = TimeSpan.FromDays(30);
-		private static async Task<ulong> VerifySessionToken(string token)
-		{
-			byte[] bytes;
-			try
-			{
-				bytes = Convert.FromBase64String(token);
-			}
-			catch
-			{
-				UserError.Throw("Invalid session token", 18);
-				return 0;
-			}
-			Sha3Digest sha3Digest = new Sha3Digest(512);
-			sha3Digest.BlockUpdate(bytes, 0, bytes.Length);
-			bytes = new byte[64];
-			sha3Digest.DoFinal(bytes, 0);
-			RedisValue redisValue = await StaticUtils.redis.StringGetAsync('S' + Convert.ToBase64String(bytes, 0, 64));
-			if (redisValue.IsNullOrEmpty)
-			{
-				UserError.Throw("Invalid session token", 18);
-			}
-			return Convert.ToUInt64(redisValue);
-		}
 		private static void Main()
 		{
 			
 		}
-		private static async Task<object> RestoreSession(object[] parameters, ulong _, WebSocketHelper wshelper)
-		{
-			if (parameters.Length != 1)
-			{
-				UserError.Throw("Invalid number of arguments", 13);
-			}
-			if (wshelper is null)
-			{
-				UserError.Throw("Websockets only", 19);
-			}
-			if (parameters[0] is string token)
-			{
-				wshelper.userid = await VerifySessionToken(token);
-				Interlocked.MemoryBarrier();
-				return true;
-			}
-			else
-			{
-				UserError.Throw("Non-string arguments not accepted", 15);
-				return null;
-			}
-		}
+		
 		[JsonObject(MemberSerialization.Fields)]
 		private sealed class ReCaptchaResponse
 		{
@@ -225,6 +181,46 @@ namespace OpenCEX
 						Interlocked.MemoryBarrier();
 					}
 					return await GenerateSession(userid2);
+				}
+				else
+				{
+					UserError.Throw("Non-string arguments not accepted", 15);
+					return null;
+				}
+			});
+			StaticUtils.RegisterRequestMethod("restoreSession", async (object[] parameters, ulong _, WebSocketHelper wshelper) => {
+				if (parameters.Length != 1)
+				{
+					UserError.Throw("Invalid number of arguments", 13);
+				}
+				if (wshelper is null)
+				{
+					UserError.Throw("Websockets only", 19);
+				}
+				if (parameters[0] is string token)
+				{
+					byte[] bytes;
+					try
+					{
+						bytes = Convert.FromBase64String(token);
+					}
+					catch
+					{
+						UserError.Throw("Invalid session token", 18);
+						return 0;
+					}
+					Sha3Digest sha3Digest = new Sha3Digest(512);
+					sha3Digest.BlockUpdate(bytes, 0, bytes.Length);
+					bytes = new byte[64];
+					sha3Digest.DoFinal(bytes, 0);
+					RedisValue redisValue = await StaticUtils.redis.StringGetAsync('S' + Convert.ToBase64String(bytes, 0, 64));
+					if (redisValue.IsNullOrEmpty)
+					{
+						UserError.Throw("Invalid session token", 18);
+					}
+					wshelper.userid = Convert.ToUInt64(redisValue);
+					Interlocked.MemoryBarrier();
+					return true;
 				}
 				else
 				{
