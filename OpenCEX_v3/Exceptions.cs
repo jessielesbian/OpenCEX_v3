@@ -11,7 +11,7 @@ namespace OpenCEX
 		{
 			this.code = code;
 		}
-		//maxcode: 19
+		//maxcode: 20
 		public static void Throw(string reason, int code){
 			throw new UserError(reason, code);
 		}

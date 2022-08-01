@@ -134,6 +134,56 @@ namespace OpenCEX
 				requestMethods.Add("getCaptchaSiteKey", GetCaptchaSiteKey);
 				requestMethods.Add("createAccount", CreateAccount);
 				requestMethods.Add("restoreSession", RestoreSession);
+				requestMethods.Add("login", Login);
+			}
+		}
+		private static async Task<object> Login(object[] parameters, ulong _, WebSocketHelper wshelper)
+		{
+			if (parameters.Length != 3)
+			{
+				UserError.Throw("Invalid number of arguments", 13);
+			}
+
+			if (parameters[0] is string && parameters[1] is string && parameters[2] is string)
+			{
+				if (parameters[0] is null || parameters[1] is null || parameters[2] is null)
+				{
+					UserError.Throw("Null arguments not accepted", 14);
+				}
+				Task chkcaptcha = VerifyCaptcha((string)parameters[0]);
+				ulong userid2;
+				try
+				{
+					string username = (string)parameters[1];
+					char[] pass = ((string)parameters[2]).ToCharArray();
+					if (pass.Length > 36)
+					{
+						UserError.Throw("Password length exceeds 72 bytes", 17);
+					}
+					Task<RedisValue> tsk = redis.StringGetAsync("AU" + username);
+					RedisValue passhash = await redis.StringGetAsync("AP" + username);
+					if(passhash.IsNullOrEmpty){
+						UserError.Throw("Invalid credentials!", 20);
+					}
+					if (!OpenBsdBCrypt.CheckPassword(passhash, pass)){
+						UserError.Throw("Invalid credentials!", 20);
+					}
+					userid2 = (ulong) await tsk;
+					
+				} finally{
+					await chkcaptcha;
+				}
+				if (wshelper is { })
+				{
+					wshelper.userid = userid2;
+					Interlocked.MemoryBarrier();
+				}
+				return await GenerateSession(userid2);
+			}
+			else
+			{
+				UserError.Throw("Non-string arguments not accepted", 15);
+				return null;
 			}
 		}
 		private static async Task<object> RestoreSession(object[] parameters, ulong _, WebSocketHelper wshelper){
@@ -146,6 +196,7 @@ namespace OpenCEX
 			}
 			if(parameters[0] is string token){
 				wshelper.userid = await VerifySessionToken(token);
+				Interlocked.MemoryBarrier();
 				return true;
 			} else{
 				UserError.Throw("Non-string arguments not accepted", 15);
@@ -163,33 +214,39 @@ namespace OpenCEX
 					UserError.Throw("Null arguments not accepted", 14);
 				}
 				Task chkcaptcha = VerifyCaptcha((string) parameters[0]);
-
 				ITransaction transaction = redis.CreateTransaction();
-				string username = (string)parameters[1];
-				string accpasshashkey = "AP" + username;
-				string accuseridkey = "AU" + username;
+				long userid;
+				try
+				{	
+					string username = (string)parameters[1];
+					string accpasshashkey = "AP" + username;
+					string accuseridkey = "AU" + username;
 
-				//We use Redis conditional commit to eliminate the expensive read needed to check username availability
-				transaction.AddCondition(Condition.KeyNotExists(accpasshashkey));
-				transaction.AddCondition(Condition.KeyNotExists(accuseridkey));
-				char[] pass = ((string)parameters[2]).ToCharArray();
-				if(pass.Length > 36){
-					UserError.Throw("Password length exceeds 72 bytes", 17);
-				}
-				byte[] salt = new byte[16];
-				ThreadStaticContext.randomNumberGenerator.GetBytes(salt, 0, 16);
+					//We use Redis conditional commit to eliminate the expensive read needed to check username availability
+					transaction.AddCondition(Condition.KeyNotExists(accpasshashkey));
+					transaction.AddCondition(Condition.KeyNotExists(accuseridkey));
+					char[] pass = ((string)parameters[2]).ToCharArray();
+					if (pass.Length > 36)
+					{
+						UserError.Throw("Password length exceeds 72 bytes", 17);
+					}
+					byte[] salt = new byte[16];
+					ThreadStaticContext.randomNumberGenerator.GetBytes(salt, 0, 16);
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-				transaction.StringSetAsync(accpasshashkey, OpenBsdBCrypt.Generate(pass, salt, 14));
+					transaction.StringSetAsync(accpasshashkey, OpenBsdBCrypt.Generate(pass, salt, 14));
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-				transaction.AddCondition(Condition.KeyNotExists(accuseridkey));
-				long userid = await redis.StringIncrementAsync("OpenCEX_UserID-CTR", 1L) + 1;
-				if(userid < 1){
-					throw new InvalidOperationException("Account number limit exceeded");
-				}
+					transaction.AddCondition(Condition.KeyNotExists(accuseridkey));
+					userid = await redis.StringIncrementAsync("OpenCEX_UserID-CTR", 1L) + 1;
+					if (userid < 1)
+					{
+						throw new InvalidOperationException("Account number limit exceeded");
+					}
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-				transaction.StringSetAsync(accuseridkey, userid);
+					transaction.StringSetAsync(accuseridkey, userid);
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-				await chkcaptcha; //Late (optimistic) captcha checking, since we can still be reverted here
+				} finally{
+					await chkcaptcha; //Late (optimistic) captcha checking, since we can still be reverted here
+				}
 				if(!await transaction.ExecuteAsync()){
 					UserError.Throw("Account opening failed", 16);
 				}
@@ -433,9 +490,7 @@ namespace OpenCEX
 			props.Add("secret", ReCaptchaSecretKey);
 			props.Add("response", response);
 
-			string res = await (await SafeSend(req)).Content.ReadAsStringAsync();
-			Console.WriteLine(res);
-			if (!JsonConvert.DeserializeObject<ReCaptchaResponse>(res).success){
+			if (!JsonConvert.DeserializeObject<ReCaptchaResponse>(await (await SafeSend(req)).Content.ReadAsStringAsync()).success){
 				UserError.Throw("Invalid captcha", 12);
 			}
 		}
@@ -713,7 +768,7 @@ namespace OpenCEX
 			Console.WriteLine("Loading plugins...");
 			Type pluginEntryType = typeof(IPluginEntry);
 			
-			foreach(string str in Directory.GetFiles(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "*.dll", SearchOption.TopDirectoryOnly)){
+			foreach(string str in Directory.GetFiles(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location) + Path.DirectorySeparatorChar + "plugins", "*.dll", SearchOption.AllDirectories)){
 				Console.WriteLine("Loading assembly " + str + "...");
 				foreach(Type type in Assembly.LoadFrom(str).GetTypes()){
 					foreach(Type inte in type.GetInterfaces()){
