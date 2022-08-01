@@ -770,7 +770,15 @@ namespace OpenCEX
 			
 			foreach(string str in Directory.GetFiles(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location) + Path.DirectorySeparatorChar + "plugins", "*.dll", SearchOption.AllDirectories)){
 				Console.WriteLine("Loading assembly " + str + "...");
-				foreach(Type type in Assembly.LoadFrom(str).GetTypes()){
+				Type[] types;
+				try{
+					types = Assembly.LoadFrom(str).GetTypes();
+				} catch (Exception e){
+					Console.WriteLine("Unable to load assembly " + str);
+					continue;
+				}
+				foreach (Type type in types)
+				{
 					foreach(Type inte in type.GetInterfaces()){
 						if(inte.IsEquivalentTo(pluginEntryType)){
 							goto noskip;
