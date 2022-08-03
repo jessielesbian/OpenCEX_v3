@@ -17,6 +17,18 @@ namespace OpenCEX
 		}
 	}
 
+	/// <summary>
+	/// Thrown by plugin to indicate lack of intention to intercept a particular request method
+	/// </summary>
+	public sealed class NotInterceptedException : Exception{
+		private NotInterceptedException(){
+			
+		}
+		public static void Throw(){
+			throw new NotInterceptedException();
+		}
+	}
+
 	public sealed class OptimisticRepeatException : Exception{
 		private readonly Task cleanUp;
 

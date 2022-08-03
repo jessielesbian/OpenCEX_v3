@@ -147,20 +147,76 @@ namespace OpenCEX
 		/// DANGEROUS: Only call from test
 		/// </summary>
 		public static Task WipeDatabase() {
+			if(initialized){
+				throw new InvalidOperationException("Database flush attempted after initialization");
+			}
 			return redisServer.FlushDatabaseAsync(0);
 		}
 		//private static readonly EthECKey exchangeWallet = new EthECKey(Environment.GetEnvironmentVariable("OpenCEX_ExchangeWalletKey") ?? throw new InvalidOperationException("Missing exchange wallet key"));
 		
 		private static readonly object requestMethodsLocker = new object();
 		private static readonly Dictionary<string, Func<object[], ulong, WebSocketHelper, Task<object>>> requestMethods = new Dictionary<string, Func<object[], ulong, WebSocketHelper, Task<object>>>();
+		private static readonly Dictionary<string, Func<object[], ulong, WebSocketHelper, Task<object>>> interceptors = new Dictionary<string, Func<object[], ulong, WebSocketHelper, Task<object>>>();
+
+		//Interception allows the dynamic replacement of request methods by plugins
+		private static Func<object[], ulong, WebSocketHelper, Task<object>> GetInterceptor(Func<object[], ulong, WebSocketHelper, Task<object>> interceptee, Func<object[], ulong, WebSocketHelper, Task<object>> interceptor){
+			return async (object[] a, ulong b, WebSocketHelper c) =>
+			{
+				try
+				{
+					return await interceptor(a, b, c);
+				}
+				catch (NotInterceptedException)
+				{
+					return await interceptee(a, b, c);
+				}
+			};
+		}
 
 		/// <summary>
-		/// Dynamically define a new request method
+		/// Unsafely replaces a request method (NOT RECOMMENDED)
 		/// </summary>
-		public static void RegisterRequestMethod(string name, Func<object[], ulong, WebSocketHelper, Task<object>> method)
+		public static void UnsafeReplaceRequestMethod(string name, Func<object[], ulong, WebSocketHelper, Task<object>> method)
 		{
+			if (initialized)
+			{
+				throw new InvalidOperationException("Attempted to register request method after initialization");
+			}
+			lock (requestMethodsLocker)
+			{
+				
+			}
+		}
+
+		/// <summary>
+		/// Dynamically define a new request method, or intercept an existing one
+		/// </summary>
+		public static void RegisterRequestMethod(string name, Func<object[], ulong, WebSocketHelper, Task<object>> method, bool intercept = false)
+		{
+			if(initialized)
+			{
+				throw new InvalidOperationException("Attempted to register request method after initialization");
+			}
 			lock (requestMethodsLocker) {
-				requestMethods.Add(name, method);
+				if(requestMethods.TryGetValue(name, out Func<object[], ulong, WebSocketHelper, Task<object>> tmp)){
+					if(!intercept){
+						throw new InvalidOperationException("Request method already exists");
+					}
+					//Request method interception allows implementation of additional safety checks, such as anti money laundering policy by plugins
+					requestMethods[name] = GetInterceptor(tmp, method);
+				} else{
+					if (interceptors.TryGetValue(name, out Func<object[], ulong, WebSocketHelper, Task<object>> interceptor))
+					{
+						method = GetInterceptor(method, interceptor);
+					}
+
+					if(intercept){
+						interceptors[name] = method;
+					} else{
+						requestMethods.TryAdd(name, method);
+						interceptors.Remove(name); //May not exist
+					}
+				}
 			}
 		}
 
@@ -543,6 +599,12 @@ namespace OpenCEX
 
 		public static readonly Type[] notypes = new Type[0];
 		public static readonly object[] noObjs = new object[0];
+		private static volatile bool initialized;
+
+		/// <summary>
+		/// Indicates either or not we have fully initialized (left the plugins loading phase)
+		/// </summary>
+		public static bool Initialized => initialized;
 		private static void Main()
 		{
 			Console.WriteLine("Initializing HTTP listener...");
@@ -615,7 +677,8 @@ namespace OpenCEX
 					}
 				}
 			}
-			
+
+			initialized = true;
 
 			Console.WriteLine("Starting request handlers...");
 			for (int i = 0; ++i < 5;)
