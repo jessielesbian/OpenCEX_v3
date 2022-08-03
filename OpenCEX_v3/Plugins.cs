@@ -12,4 +12,8 @@ namespace OpenCEX
 		/// </summary>
 		public void Init();
 	}
+
+	public enum InterceptMode : byte{
+		NoIntercept, AllowIntercept, ForceIntercept
+	}
 }

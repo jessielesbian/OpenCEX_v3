@@ -191,7 +191,7 @@ namespace OpenCEX
 		/// <summary>
 		/// Dynamically define a new request method, or intercept an existing one
 		/// </summary>
-		public static void RegisterRequestMethod(string name, Func<object[], ulong, WebSocketHelper, Task<object>> method, bool intercept = false)
+		public static void RegisterRequestMethod(string name, Func<object[], ulong, WebSocketHelper, Task<object>> method, InterceptMode interceptMode = InterceptMode.NoIntercept)
 		{
 			if(initialized)
 			{
@@ -199,7 +199,7 @@ namespace OpenCEX
 			}
 			lock (requestMethodsLocker) {
 				if(requestMethods.TryGetValue(name, out Func<object[], ulong, WebSocketHelper, Task<object>> tmp)){
-					if(!intercept){
+					if(interceptMode == InterceptMode.NoIntercept){
 						throw new InvalidOperationException("Request method already exists");
 					}
 					//Request method interception allows implementation of additional safety checks, such as anti money laundering policy by plugins
@@ -210,7 +210,7 @@ namespace OpenCEX
 						method = GetInterceptor(method, interceptor);
 					}
 
-					if(intercept){
+					if(interceptMode == InterceptMode.ForceIntercept){
 						interceptors[name] = method;
 					} else{
 						requestMethods.TryAdd(name, method);
