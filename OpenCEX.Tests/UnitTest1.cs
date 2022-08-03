@@ -50,6 +50,45 @@ namespace OpenCEX
 
 		}
 
+		[Test] public async Task PreceedingRequestInterception(){
+			StaticUtils.RegisterRequestMethod("testInterception1", (object[] a, ulong b, WebSocketHelper c) =>
+			{
+				return Task.FromResult((object)"jessielesbian");
+			}, InterceptMode.ForceIntercept);
+			StaticUtils.RegisterRequestMethod("testInterception1", (object[] a, ulong b, WebSocketHelper c) =>
+			{
+				return Task.FromResult((object)"flyinglesbian");
+			}, InterceptMode.NoIntercept);
+			Assert.AreEqual("{\"result\":\"jessielesbian\",\"jsonrpc\":\"2.0\",\"id\":0}", await StaticUtils.HandleJsonRequest("{\"jsonrpc\": \"2.0\", \"method\": \"testInterception1\", \"params\": [], \"id\": 0}", 0, null));
+		}
+		[Test]
+		public async Task ProceedingRequestInterception()
+		{
+			StaticUtils.RegisterRequestMethod("testInterception2", (object[] a, ulong b, WebSocketHelper c) =>
+			{
+				return Task.FromResult((object)"jessielesbian");
+			}, InterceptMode.NoIntercept);
+			StaticUtils.RegisterRequestMethod("testInterception2", (object[] a, ulong b, WebSocketHelper c) =>
+			{
+				return Task.FromResult((object)"flyinglesbian");
+			}, InterceptMode.AllowIntercept);
+			Assert.AreEqual("{\"result\":\"flyinglesbian\",\"jsonrpc\":\"2.0\",\"id\":0}", await StaticUtils.HandleJsonRequest("{\"jsonrpc\": \"2.0\", \"method\": \"testInterception2\", \"params\": [], \"id\": 0}", 0, null));
+		}
+		[Test]
+		public async Task DelegatedRequestInterception()
+		{
+			StaticUtils.RegisterRequestMethod("testInterception3", (object[] a, ulong b, WebSocketHelper c) =>
+			{
+				return Task.FromResult((object)"jessielesbian");
+			}, InterceptMode.NoIntercept);
+			StaticUtils.RegisterRequestMethod("testInterception3", (object[] a, ulong b, WebSocketHelper c) =>
+			{
+				NotInterceptedException.Throw();
+				return null;
+			}, InterceptMode.AllowIntercept);
+			Assert.AreEqual("{\"result\":\"jessielesbian\",\"jsonrpc\":\"2.0\",\"id\":0}", await StaticUtils.HandleJsonRequest("{\"jsonrpc\": \"2.0\", \"method\": \"testInterception3\", \"params\": [], \"id\": 0}", 0, null));
+		}
+
 		[Test]
 		public async Task JsonRpc()
 		{

@@ -205,16 +205,16 @@ namespace OpenCEX
 					//Request method interception allows implementation of additional safety checks, such as anti money laundering policy by plugins
 					requestMethods[name] = GetInterceptor(tmp, method);
 				} else{
-					if (interceptors.TryGetValue(name, out Func<object[], ulong, WebSocketHelper, Task<object>> interceptor))
+					bool canIntercept = interceptors.Remove(name, out Func<object[], ulong, WebSocketHelper, Task<object>> interceptor);
+					if (canIntercept)
 					{
-						method = GetInterceptor(method, interceptor);
+						method = GetInterceptor(method, interceptor); //Inject interceptor
 					}
 
 					if(interceptMode == InterceptMode.ForceIntercept){
-						interceptors[name] = method;
+						interceptors.Add(name, method);
 					} else{
-						requestMethods.TryAdd(name, method);
-						interceptors.Remove(name); //May not exist
+						requestMethods.Add(name, method);
 					}
 				}
 			}

@@ -13,6 +13,11 @@ namespace OpenCEX
 		public void Init();
 	}
 
+	/// <summary>
+	/// NoIntercept = only add as base request method, throws if added as interceptor
+	/// AllowIntercept = may add as base or intercept request method
+	/// ForceIntercept = only add as interceptor, delay add until base added first
+	/// </summary>
 	public enum InterceptMode : byte{
 		NoIntercept, AllowIntercept, ForceIntercept
 	}
