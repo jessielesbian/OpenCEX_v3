@@ -8,117 +8,141 @@ using System.Threading.Tasks;
 namespace OpenCEX
 {
 	/// <summary>
-	/// OpenCEX v3.0 ultra high performance LRU cache with a background eviction thread
+	/// A strong reference that is converted to a weak reference after a set amount of time
 	/// </summary>
-	public sealed class LruCache<K, V> : IDisposable
+	public sealed class SoftReference<T> where T : class
 	{
-		private volatile int gcsignal;
-		private sealed class TrackedValue{
-			public LinkedListNode<K> linkedListNode;
-			public V value;
+		private readonly int expiry;
+		private volatile int weakeners;
+		public SoftReference(T obj, int time){
+			if(time < 0){
+				throw new ArgumentOutOfRangeException("Negative soft reference lifetime");
+			}
+			t = obj ?? throw new ArgumentNullException(nameof(obj));
+			wr = new WeakReference<T>(obj);
+			expiry = time;
+			TryRenew();
+		}
 
-			public TrackedValue(V value)
+		/// <summary>
+		/// Attempts to renew the soft reference
+		/// </summary>
+		public async void TryRenew(){
+			//Optimistically assume that we won't get renewed
+			int id = Interlocked.Increment(ref weakeners);
+
+			//Renew-after-expiry
+			if(t is null){
+				if(wr.TryGetTarget(out T temp)){
+					t = temp; //We can be reinstated
+				} else{
+					return; //We are already dead
+				}
+			}
+
+			await Task.Delay(expiry);
+
+			//Check if we have been renewed
+			if (weakeners == id)
 			{
-				this.value = value;
+				t = null;
 			}
 		}
-		public LruCache(){
-			//Start garbage collector
-			CollectGarbage();
+
+		public bool TryGetTarget(out T res){
+			res = t;
+			return res is null ? wr.TryGetTarget(out res) : true;
 		}
-		private readonly Dictionary<K, TrackedValue> dict = new Dictionary<K, TrackedValue>();
-		private readonly LinkedList<K> trackedKeys = new LinkedList<K>();
-		private readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
-		
-		public async Task<V> Get(K key, bool remove){
-			await semaphoreSlim.WaitAsync();
-			try
-			{	
-				if (dict.TryGetValue(key, out TrackedValue trackedValue))
-				{
-					trackedKeys.Remove(trackedValue.linkedListNode);
-					if(remove){
-						dict.Remove(trackedValue.linkedListNode.Value);
-					} else{
-						trackedValue.linkedListNode = trackedKeys.AddFirst(key);
+
+		private readonly WeakReference<T> wr;
+		private volatile T t;
+	}
+	/// <summary>
+	/// A flash (clear-on-GC) cache
+	/// </summary>
+	public sealed class SharedFlashCache<K, V>{
+		private sealed class Wrapper{
+			public readonly K key;
+			public V value;
+			public readonly WeakReference<ConcurrentDictionary<K, SoftReference<Wrapper>>> stored;
+			public volatile bool active; //Marks us as in-use
+			public volatile bool invalid; //Marks us as invalid
+
+			public Wrapper(K key, WeakReference<ConcurrentDictionary<K, SoftReference<Wrapper>>> stored)
+			{
+				this.key = key;
+				this.stored = stored;
+			}
+
+			~Wrapper(){
+				invalid = true;
+				if (active){
+					if (stored.TryGetTarget(out ConcurrentDictionary<K, SoftReference<Wrapper>> dict))
+					{
+						dict.TryRemove(key, out _);
 					}
-					
-					return trackedValue.value;
 				}
-				else
-				{
-					CacheMissException.Throw();
-					throw new Exception("Failed to throw cache miss exception (should not reach here)");
-				}
-			} finally{
-				semaphoreSlim.Release();
+			}
+		}
+		private readonly ConcurrentDictionary<K, SoftReference<Wrapper>> keyValuePairs = new ConcurrentDictionary<K, SoftReference<Wrapper>>();
+		private readonly WeakReference<ConcurrentDictionary<K, SoftReference<Wrapper>>> weakref;
+		public SharedFlashCache(){
+			weakref = new WeakReference<ConcurrentDictionary<K, SoftReference<Wrapper>>>(keyValuePairs);
+		}
+		public void Set(K key, V val){
+		start:
+			SoftReference<Wrapper> wrapper = keyValuePairs.GetOrAdd(key, (K key2) =>
+			{
+				//Expires in 5 minutes
+				return new SoftReference<Wrapper>(new Wrapper(key2, weakref), 300000);
+			});
+
+			if(!wrapper.TryGetTarget(out Wrapper wrapper2)){
+				goto start;
+			}
+
+			wrapper.TryRenew();
+			wrapper2.value = val;
+			wrapper2.invalid = false; //Reinstate if invalid
+			Interlocked.MemoryBarrier(); //We need this memory barrier since we are signalling get that it can continue
+			wrapper2.active = true;
+		}
+		public bool Get(K key, out V val){
+			if(!keyValuePairs.TryGetValue(key, out SoftReference<Wrapper> wr)){
+				val = default;
+				return false;
+			}
+
+			if(!wr.TryGetTarget(out Wrapper wrapper)){
+				val = default;
+				return false;
+			}
+
+			wr.TryRenew();
+			//Spin until wrapper gets marked as active
+			while (!wrapper.active){
+				
+			}
+			Interlocked.MemoryBarrier(); //We need this memory barrier since we are being signalled
+			if (wrapper.invalid){
+				val = default;
+				return false;
 			}
 			
-		}
-		
-		public async Task Set(K key, V value){
-			await semaphoreSlim.WaitAsync();
-			try
-			{
-				if (dict.TryGetValue(key, out TrackedValue trackedValue))
-				{
-					trackedKeys.Remove(trackedValue.linkedListNode);
-					trackedValue.linkedListNode = trackedKeys.AddFirst(key);
-					trackedValue.value = value;
-				}
-				else
-				{
-					trackedValue = new TrackedValue(value)
-					{
-						linkedListNode = trackedKeys.AddFirst(key)
-					};
-					dict.Add(key, trackedValue);
-				}
-			} finally{
-				semaphoreSlim.Release();
-			}
-		}
-		
-		/// <summary>
-		/// Non-blocking garbage collection
-		/// </summary>
-		private async void CollectGarbage(){
-
-			//Keep on GCing until we got abort signal
-			while (gcsignal == 0)
-			{
-				await Task.Delay(1); //GC runs every microsecond
-				await semaphoreSlim.WaitAsync();
-
-				//Collect all the garbage
-				try
-				{
-					int count = trackedKeys.Count;
-					if (count > 65536)
-					{
-						count -= 65535;
-						for (int i = 0; ++i < count && gcsignal == 0;)
-						{
-							dict.Remove(trackedKeys.Last.Value);
-							trackedKeys.RemoveLast();
-						}
-					}
-				}
-				finally
-				{
-					semaphoreSlim.Release();
-				}
-			}
+			val = wrapper.value;
+			return true;
 		}
 
 		/// <summary>
-		/// This method MUST be called to stop the cache eviction background loop, otherwise we will waste CPU and RAM
+		/// Guarantees that the key doesn't exist in the cache
 		/// </summary>
-		public void Dispose(){
-			//Signal GC abort
-			gcsignal = 1;
+		public void Remove(K key){
+			//We simply mark the wrapper as invalid and wait until the next GC cycle
+			if(keyValuePairs.TryGetValue(key, out SoftReference<Wrapper> wr)){
+				if(wr.TryGetTarget(out Wrapper wrapper)){
+					wrapper.invalid = true;
+				}
+			}
 		}
-
-
 	}
 }

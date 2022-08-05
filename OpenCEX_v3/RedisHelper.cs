@@ -56,50 +56,15 @@ namespace OpenCEX
 			if(cache.TryGetValue(key, out RedisKVCacheDescriptor desc)){
 				return desc;
 			} else{
-				
-
-				//Optimistic caching: optimistically presume that the cache is up-to-date, since this is checked during commit
-				//Also, since the cache is locking, we fall back to redis if that's faster (e.g the server is under heavy loads, so the're are many threads waiting to use the cache)
-				SemaphoreSlim semaphoreSlim = new SemaphoreSlim(0, 2);
-				Task<RedisValue> readcache = StaticUtils.OptimisticRedisCache.Get(key, false);
-				Action release = () => {
-					semaphoreSlim.Release();
-				};
-				readcache.GetAwaiter().OnCompleted(release);
-				Task<RedisValue> readredis = StaticUtils.redis.StringGetAsync(key);
-				readredis.GetAwaiter().OnCompleted(release);
-				await semaphoreSlim.WaitAsync();
-				StaticUtils.WaitAndDisposeSemaphore(semaphoreSlim);
-
-				RedisValue value;
-				Task cachetsk = null;
-				if (readcache.IsCompleted){
-					try
-					{
-						value = await readcache;
-					}
-					catch (CacheMissException)
-					{
-						value = await readredis;
-
-						//Optimistic caching is one of the smartest inventions made by this cute anime lesbian
-						cachetsk = StaticUtils.OptimisticRedisCache.Set(key, value);
-					}
-				} else{
-					value = await readredis;
-
-					//Optimistic caching is one of the smartest inventions made by this cute anime lesbian
-					cachetsk = StaticUtils.OptimisticRedisCache.Set(key, value);
+				if (!StaticUtils.optimisticRedisCache.Get(key, out RedisValue value))
+				{
+					value = await StaticUtils.redis.StringGetAsync(key);
+					StaticUtils.optimisticRedisCache.Set(key, value);
 				}
-				
-
 				desc = new RedisKVCacheDescriptor(key, value);
 
 				cache.Add(key, desc);
 				flushingQueue.Enqueue(desc);
-				if(cachetsk is { }){
-					await cachetsk;
-				}
 				desc.docommit = true;
 				return desc;
 			}

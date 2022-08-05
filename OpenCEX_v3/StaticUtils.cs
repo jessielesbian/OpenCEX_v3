@@ -235,7 +235,6 @@ namespace OpenCEX
 		public static IDatabase redis;
 
 		//Optimistic caching for use by Redis helpers
-		internal static readonly LruCache<RedisKey, RedisValue> OptimisticRedisCache = new LruCache<RedisKey, RedisValue>();
 
 		/// <summary>
 		/// Optimistic Redis Caching: flush the L1 cache to the L2 cache
@@ -247,23 +246,20 @@ namespace OpenCEX
 				if(write){
 					foreach (KeyValuePair<RedisKey, RedisValue> item in queue)
 					{
-						await OptimisticRedisCache.Set(item.Key, item.Value);
+						optimisticRedisCache.Set(item.Key, item.Value);
 					}
 				}
 			} else{
 				//Failed to commit
 				foreach (KeyValuePair<RedisKey, RedisValue> item in queue)
 				{
-					try{
-						await OptimisticRedisCache.Get(item.Key, true);
-					} catch(CacheMissException){
-						
-					}
+					optimisticRedisCache.Remove(item.Key);
 				}
 			}
 		}
 		
 		private static readonly AsyncReaderWriterLock abortInhibition = AsyncReaderWriterLock.Create();
+		internal static readonly SharedFlashCache<RedisKey, RedisValue> optimisticRedisCache = new SharedFlashCache<RedisKey, RedisValue>();
 
 		/// <summary>
 		/// Obtains an optimistic lock
