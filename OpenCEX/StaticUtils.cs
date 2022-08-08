@@ -17,13 +17,15 @@ using System.Linq;
 
 using Newtonsoft.Json.Linq;
 using System.Net.WebSockets;
+using System.Collections.Concurrent;
 
 namespace OpenCEX
 {
 	/// <summary>
 	/// All the thread-private shit
 	/// </summary>
-	public sealed class ThreadStaticContext{
+	public sealed class ThreadStaticContext
+	{
 		public readonly HttpClient httpClient = new HttpClient();
 		public readonly RandomNumberGenerator randomNumberGenerator = RandomNumberGenerator.Create();
 		public ThreadStaticContext(){
@@ -104,7 +106,7 @@ namespace OpenCEX
 				UserError.Throw("Symbols must not contain slashes", 9);
 			}
 		}
-		private static JsonSerializerSettings jsonSerializerSettings = new JsonSerializerSettings();
+		private static readonly JsonSerializerSettings jsonSerializerSettings = new JsonSerializerSettings();
 		static StaticUtils() {
 			Console.WriteLine("OpenCEX v3.0: The open-source cryptocurrency exchange");
 			Console.WriteLine("Made by Jessie Lesbian <jessielesbian@protonmail.com> https://www.reddit.com/u/jessielesbian");
@@ -135,11 +137,9 @@ namespace OpenCEX
 		
 
 		
-#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
-		private static async Task<object> DoNothing2(object[] @params, ulong userid, WebSocketHelper wshelper)
-#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
+		private static Task<object> DoNothing2(object[] @params, ulong userid, WebSocketHelper wshelper)
 		{
-			return @params;
+			return Task.FromResult<object>(@params);
 		}
 
 		private static readonly IServer redisServer;
@@ -147,7 +147,7 @@ namespace OpenCEX
 		/// DANGEROUS: Only call from test
 		/// </summary>
 		public static Task WipeDatabase() {
-			if(initialized){
+			if(inhibitedPlugins is null){
 				throw new InvalidOperationException("Database flush attempted after initialization");
 			}
 			return redisServer.FlushDatabaseAsync(0);
@@ -178,13 +178,13 @@ namespace OpenCEX
 		/// </summary>
 		public static void UnsafeReplaceRequestMethod(string name, Func<object[], ulong, WebSocketHelper, Task<object>> method)
 		{
-			if (initialized)
+			if (inhibitedPlugins is null)
 			{
 				throw new InvalidOperationException("Attempted to register request method after initialization");
 			}
 			lock (requestMethodsLocker)
 			{
-				
+				requestMethods[name] = method;
 			}
 		}
 
@@ -193,7 +193,7 @@ namespace OpenCEX
 		/// </summary>
 		public static void RegisterRequestMethod(string name, Func<object[], ulong, WebSocketHelper, Task<object>> method, InterceptMode interceptMode = InterceptMode.NoIntercept)
 		{
-			if(initialized)
+			if(inhibitedPlugins is null)
 			{
 				throw new InvalidOperationException("Attempted to register request method after initialization");
 			}
@@ -259,7 +259,7 @@ namespace OpenCEX
 		}
 		
 		private static readonly AsyncReaderWriterLock abortInhibition = AsyncReaderWriterLock.Create();
-		internal static readonly SharedFlashCache<RedisKey, RedisValue> optimisticRedisCache = new SharedFlashCache<RedisKey, RedisValue>();
+		internal static readonly SharedLruCache<RedisKey, RedisValue> optimisticRedisCache = new SharedLruCache<RedisKey, RedisValue>();
 
 		/// <summary>
 		/// Obtains an optimistic lock
@@ -306,18 +306,18 @@ namespace OpenCEX
 				this.error = error;
 			}
 		}
-		private static event EventHandler<WebSocketNotification> webSocketEventsHandler;
+		private static event EventHandler<WebSocketNotification> WebSocketEventsHandler;
 		public static void RaiseWebsocketNotification(WebSocketNotification webSocketNotification)
 		{
-			webSocketEventsHandler?.Invoke(null, webSocketNotification);
+			WebSocketEventsHandler?.Invoke(null, webSocketNotification);
 		}
 		public static void RegisterWebsocketNotificationListener(EventHandler<WebSocketNotification> eventHandler)
 		{
-			webSocketEventsHandler += eventHandler;
+			WebSocketEventsHandler += eventHandler;
 		}
 		public static void DeRegisterWebsocketNotificationListener(EventHandler<WebSocketNotification> eventHandler)
 		{
-			webSocketEventsHandler -= eventHandler;
+			WebSocketEventsHandler -= eventHandler;
 		}
 
 		private sealed class JsonRpcRequest{
@@ -509,6 +509,8 @@ namespace OpenCEX
 			}
 
 		}
+
+		public static string workingdir = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
 		private static async void HandleRequest(HttpListenerContext httpListenerContext){
 			try{
 				HttpListenerRequest httpListenerRequest = httpListenerContext.Request;
@@ -595,12 +597,15 @@ namespace OpenCEX
 
 		public static readonly Type[] notypes = new Type[0];
 		public static readonly object[] noObjs = new object[0];
-		private static volatile bool initialized;
+		private static volatile ConcurrentDictionary<Type, bool> inhibitedPlugins = new ConcurrentDictionary<Type, bool>();
+		public static bool InhibitPlugin(Type type){
+			return (inhibitedPlugins ?? throw new InvalidOperationException("Attempted to register request method after initialization")).TryAdd(type, false);
+		}
 
 		/// <summary>
 		/// Indicates either or not we have fully initialized (left the plugins loading phase)
 		/// </summary>
-		public static bool Initialized => initialized;
+		public static bool Initialized => inhibitedPlugins is null;
 		private static void Main()
 		{
 			Console.WriteLine("Initializing HTTP listener...");
@@ -644,12 +649,12 @@ namespace OpenCEX
 			Console.WriteLine("Loading plugins...");
 			Type pluginEntryType = typeof(IPluginEntry);
 			
-			foreach(string str in Directory.GetFiles(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location) + Path.DirectorySeparatorChar + "plugins", "*.dll", SearchOption.AllDirectories)){
+			foreach(string str in Directory.GetFiles(workingdir + Path.DirectorySeparatorChar + "plugins", "*.dll", SearchOption.AllDirectories)){
 				Console.WriteLine("Loading assembly " + str + "...");
 				Type[] types;
 				try{
 					types = Assembly.LoadFrom(str).GetTypes();
-				} catch (Exception e){
+				} catch (Exception){
 					Console.WriteLine("Unable to load assembly " + str);
 					continue;
 				}
@@ -674,8 +679,7 @@ namespace OpenCEX
 				}
 			}
 
-			initialized = true;
-
+			inhibitedPlugins = null;
 			Console.WriteLine("Starting request handlers...");
 			for (int i = 0; ++i < 5;)
 			{
@@ -704,13 +708,7 @@ namespace OpenCEX
 			httpResponseMessage.EnsureSuccessStatusCode();
 			return httpResponseMessage;
 		}
-
-
-#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
-		public static async Task DoNothingAsync(){
-#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
-
-		}
-		public static readonly Task DoNothing = DoNothingAsync();
+		public static Task<object> doNothing3 = Task.FromResult<object>(null);
+		public static readonly Task DoNothing = Task.CompletedTask;
 	}
 }

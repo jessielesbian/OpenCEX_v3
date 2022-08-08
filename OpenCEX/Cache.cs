@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -57,10 +55,11 @@ namespace OpenCEX
 		private readonly WeakReference<T> wr;
 		private volatile T t;
 	}
+
 	/// <summary>
-	/// A flash (clear-on-GC) cache
+	/// A LRU cache
 	/// </summary>
-	public sealed class SharedFlashCache<K, V>{
+	public sealed class SharedLruCache<K, V>{
 		private sealed class Wrapper{
 			public readonly K key;
 			public V value;
@@ -86,7 +85,7 @@ namespace OpenCEX
 		}
 		private readonly ConcurrentDictionary<K, SoftReference<Wrapper>> keyValuePairs = new ConcurrentDictionary<K, SoftReference<Wrapper>>();
 		private readonly WeakReference<ConcurrentDictionary<K, SoftReference<Wrapper>>> weakref;
-		public SharedFlashCache(){
+		public SharedLruCache(){
 			weakref = new WeakReference<ConcurrentDictionary<K, SoftReference<Wrapper>>>(keyValuePairs);
 		}
 		public void Set(K key, V val){

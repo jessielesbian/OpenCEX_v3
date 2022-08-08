@@ -3,15 +3,19 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.31729.503
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenCEX", "OpenCEX_v3\OpenCEX.csproj", "{6C5FB1A1-3D90-4D09-8721-9A65FA20618A}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenCEX", "OpenCEX\OpenCEX.csproj", "{6C5FB1A1-3D90-4D09-8721-9A65FA20618A}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenCEX.Tests", "OpenCEX.Tests\OpenCEX.Tests.csproj", "{55FAF996-DA52-4E1C-9127-57330214BEE9}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenCEX.Authentication", "OpenCEX.Authentication\OpenCEX.Authentication.csproj", "{1E51550C-6236-4B26-A411-98F6D5556BD4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenCEX.Trading", "OpenCEX.Trading\OpenCEX.Trading.csproj", "{69661C1F-460F-4FF1-83B2-F838127D7744}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenCEX.Trading", "OpenCEX.Trading\OpenCEX.Trading.csproj", "{69661C1F-460F-4FF1-83B2-F838127D7744}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenCEX.Deposits.Ethereum", "OpenCEX.Deposits.Ethereum\OpenCEX.Deposits.Ethereum.csproj", "{52AB9DFB-56C9-4214-87CA-FD9EE16B3579}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenCEX.SmartLoader", "OpenCEX.SmartLoader\OpenCEX.SmartLoader.csproj", "{FA7147CA-5750-44AA-8193-4EDDD1FF2088}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenCEX.Fallback", "OpenCEX.Fallback\OpenCEX.Fallback.csproj", "{C634D20B-455B-4480-8A96-2EDC6C2F5559}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenCEX.EthWallet", "OpenCEX.EthWallet\OpenCEX.EthWallet.csproj", "{3675AD4C-EF3C-4419-B2D9-D800A03A7332}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -35,10 +39,18 @@ Global
 		{69661C1F-460F-4FF1-83B2-F838127D7744}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{69661C1F-460F-4FF1-83B2-F838127D7744}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{69661C1F-460F-4FF1-83B2-F838127D7744}.Release|Any CPU.Build.0 = Release|Any CPU
-		{52AB9DFB-56C9-4214-87CA-FD9EE16B3579}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{52AB9DFB-56C9-4214-87CA-FD9EE16B3579}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{52AB9DFB-56C9-4214-87CA-FD9EE16B3579}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{52AB9DFB-56C9-4214-87CA-FD9EE16B3579}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FA7147CA-5750-44AA-8193-4EDDD1FF2088}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FA7147CA-5750-44AA-8193-4EDDD1FF2088}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FA7147CA-5750-44AA-8193-4EDDD1FF2088}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FA7147CA-5750-44AA-8193-4EDDD1FF2088}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C634D20B-455B-4480-8A96-2EDC6C2F5559}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C634D20B-455B-4480-8A96-2EDC6C2F5559}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C634D20B-455B-4480-8A96-2EDC6C2F5559}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C634D20B-455B-4480-8A96-2EDC6C2F5559}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3675AD4C-EF3C-4419-B2D9-D800A03A7332}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3675AD4C-EF3C-4419-B2D9-D800A03A7332}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3675AD4C-EF3C-4419-B2D9-D800A03A7332}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3675AD4C-EF3C-4419-B2D9-D800A03A7332}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

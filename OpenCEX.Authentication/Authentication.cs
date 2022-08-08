@@ -11,11 +11,11 @@ using System.Threading.Tasks;
 
 namespace OpenCEX
 {
-	public sealed class TestPlugin : IPluginEntry
+	public sealed class TestPlugin : InhibitOnLoadPlugin
 	{
 		private static void Main()
 		{
-			
+
 		}
 		
 		[JsonObject(MemberSerialization.Fields)]
@@ -23,7 +23,7 @@ namespace OpenCEX
 		{
 			public bool success;
 		}
-		public void Init()
+		protected override void InitImpl()
 		{
 			Console.WriteLine("Loading OpenCEX v3.0 authentication plugin...");
 			{
@@ -52,8 +52,10 @@ namespace OpenCEX
 					KeyValuePair<string, string> ReCaptchaSecretKey = new KeyValuePair<string, string>("secret", Environment.GetEnvironmentVariable("OpenCEX_ReCaptchaSecretKey") ?? throw new InvalidOperationException("Missing ReCaptcha secret key"));
 					VerifyCaptcha = async (string response) =>
 					{
-						HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "https://www.google.com/recaptcha/api/siteverify");
-						req.Content = new FormUrlEncodedContent(new KeyValuePair<string, string>[] { ReCaptchaSecretKey, new KeyValuePair<string, string>("response", response) });
+						HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "https://www.google.com/recaptcha/api/siteverify")
+						{
+							Content = new FormUrlEncodedContent(new KeyValuePair<string, string>[] { ReCaptchaSecretKey, new KeyValuePair<string, string>("response", response) })
+						};
 						IDictionary<string, object> props = req.Properties;
 						props.Add("secret", ReCaptchaSecretKey);
 						props.Add("response", response);
@@ -77,18 +79,18 @@ namespace OpenCEX
 						UserError.Throw("Invalid number of arguments", 13);
 					}
 
-					if (parameters[0] is string && parameters[1] is string && parameters[2] is string)
+					if (parameters[0] is string @string && parameters[1] is string string1 && parameters[2] is string string2)
 					{
 						if (parameters[0] is null || parameters[1] is null || parameters[2] is null)
 						{
 							UserError.Throw("Null arguments not accepted", 14);
 						}
-						Task chkcaptcha = VerifyCaptcha((string)parameters[0]);
+						Task chkcaptcha = VerifyCaptcha(@string);
 						ulong userid2;
 						try
 						{
-							string username = (string)parameters[1];
-							char[] pass = ((string)parameters[2]).ToCharArray();
+							string username = string1;
+							char[] pass = string2.ToCharArray();
 							if (pass.Length > 36)
 							{
 								UserError.Throw("Password length exceeds 72 bytes", 17);
@@ -131,25 +133,25 @@ namespace OpenCEX
 						UserError.Throw("Invalid number of arguments", 13);
 					}
 
-					if (parameters[0] is string && parameters[1] is string && parameters[2] is string)
+					if (parameters[0] is string @string && parameters[1] is string string1 && parameters[2] is string string2)
 					{
 						if (parameters[0] is null || parameters[1] is null || parameters[2] is null)
 						{
 							UserError.Throw("Null arguments not accepted", 14);
 						}
-						Task chkcaptcha = VerifyCaptcha((string)parameters[0]);
+						Task chkcaptcha = VerifyCaptcha(@string);
 						ITransaction transaction = StaticUtils.redis.CreateTransaction();
 						long userid;
 						try
 						{
-							string username = (string)parameters[1];
+							string username = string1;
 							string accpasshashkey = "AP" + username;
 							string accuseridkey = "AU" + username;
 
 							//We use Redis conditional commit to eliminate the expensive read needed to check username availability
 							transaction.AddCondition(Condition.KeyNotExists(accpasshashkey));
 							transaction.AddCondition(Condition.KeyNotExists(accuseridkey));
-							char[] pass = ((string)parameters[2]).ToCharArray();
+							char[] pass = string2.ToCharArray();
 							if (pass.Length > 36)
 							{
 								UserError.Throw("Password length exceeds 72 bytes", 17);

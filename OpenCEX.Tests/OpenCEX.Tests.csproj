@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\OpenCEX_v3\OpenCEX.csproj" />
+    <ProjectReference Include="..\OpenCEX\OpenCEX.csproj" />
   </ItemGroup>
 
 </Project>
