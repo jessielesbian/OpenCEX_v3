@@ -14,10 +14,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Nethereum.HdWallet" Version="4.7.0" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\OpenCEX.Fallback\OpenCEX.Fallback.csproj" />
     <ProjectReference Include="..\OpenCEX.SmartLoader\OpenCEX.SmartLoader.csproj" />
   </ItemGroup>
